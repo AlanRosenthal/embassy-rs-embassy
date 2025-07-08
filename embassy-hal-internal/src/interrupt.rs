@@ -46,12 +46,14 @@ macro_rules! interrupt_mod {
                     /// Enable the interrupt.
                     #[inline]
                     unsafe fn enable() {
+                        trace!("IRQ enable: {}", Self::IRQ);
                         Self::IRQ.enable()
                     }
 
                     /// Disable the interrupt.
                     #[inline]
                     fn disable() {
+                        trace!("IRQ disable: {}", Self::IRQ);
                         Self::IRQ.disable()
                     }
 

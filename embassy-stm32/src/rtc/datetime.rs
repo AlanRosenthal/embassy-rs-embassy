@@ -174,6 +174,23 @@ pub enum DayOfWeek {
     Sunday = 7,
 }
 
+#[cfg(rtc_v3c0)]
+use crate::pac::rtc::vals::WeekDay;
+#[cfg(rtc_v3c0)]
+impl From<DayOfWeek> for WeekDay {
+    fn from(day: DayOfWeek) -> Self {
+        match day {
+            DayOfWeek::Monday => WeekDay::MONDAY,
+            DayOfWeek::Tuesday => WeekDay::TUESDAY,
+            DayOfWeek::Wednesday => WeekDay::WEDNESDAY,
+            DayOfWeek::Thursday => WeekDay::THURSDAY,
+            DayOfWeek::Friday => WeekDay::FRIDAY,
+            DayOfWeek::Saturday => WeekDay::SATURDAY,
+            DayOfWeek::Sunday => WeekDay::SUNDAY,
+        }
+    }
+}
+
 #[cfg(feature = "chrono")]
 impl From<chrono::Weekday> for DayOfWeek {
     fn from(weekday: Weekday) -> Self {

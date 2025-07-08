@@ -1,0 +1,7 @@
+device STM32C011F6
+if SWD
+speed 4000
+connect
+erase
+reboot
+quit

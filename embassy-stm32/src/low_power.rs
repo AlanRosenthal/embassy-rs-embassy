@@ -70,7 +70,7 @@ use crate::rtc::Rtc;
 
 static mut EXECUTOR: Option<Executor> = None;
 
-#[cfg(not(stm32u0))]
+#[cfg(not(any(stm32u0, stm32c0)))]
 foreach_interrupt! {
     (RTC, rtc, $block:ident, WKUP, $irq:ident) => {
         #[interrupt]
@@ -92,8 +92,22 @@ foreach_interrupt! {
     };
 }
 
+#[cfg(stm32c0)]
+foreach_interrupt! {
+    (RTC, rtc, $block:ident, ALARM, $irq:ident) => {
+        #[interrupt]
+        #[allow(non_snake_case)]
+        unsafe fn $irq() {
+            trace!("IRQ::ALARM");
+            EXECUTOR.as_mut().unwrap().on_wakeup_irq();
+        }
+    };
+}
+
+
 #[allow(dead_code)]
 pub(crate) unsafe fn on_wakeup_irq() {
+    trace!("on_wakeup_irq");
     EXECUTOR.as_mut().unwrap().on_wakeup_irq();
 }
 
@@ -108,8 +122,12 @@ pub fn stop_with_rtc(rtc: &'static Rtc) {
 /// prevents entering the given stop mode.
 pub fn stop_ready(stop_mode: StopMode) -> bool {
     match unsafe { EXECUTOR.as_mut().unwrap() }.stop_mode() {
+        #[cfg(not(stm32c0))]
         Some(StopMode::Stop2) => true,
+        #[cfg(not(stm32c0))]
         Some(StopMode::Stop1) => stop_mode == StopMode::Stop1,
+        #[cfg(stm32c0)]
+        Some(StopMode::Stop) => true,
         None => false,
     }
 }
@@ -118,21 +136,30 @@ pub fn stop_ready(stop_mode: StopMode) -> bool {
 #[non_exhaustive]
 #[derive(PartialEq)]
 pub enum StopMode {
+#[cfg(not(stm32c0))]
     /// STOP 1
     Stop1,
+#[cfg(not(stm32c0))]
     /// STOP 2
     Stop2,
+#[cfg(stm32c0)]
+    /// STOP
+    Stop,
 }
 
-#[cfg(any(stm32l4, stm32l5, stm32u5, stm32u0))]
+#[cfg(any(stm32l4, stm32l5, stm32u5, stm32u0, stm32c0))]
 use stm32_metapac::pwr::vals::Lpms;
 
-#[cfg(any(stm32l4, stm32l5, stm32u5, stm32u0))]
+#[cfg(any(stm32l4, stm32l5, stm32u5, stm32u0, stm32c0))]
 impl Into<Lpms> for StopMode {
     fn into(self) -> Lpms {
         match self {
+        #[cfg(not(stm32c0))]
             StopMode::Stop1 => Lpms::STOP1,
+        #[cfg(not(stm32c0))]
             StopMode::Stop2 => Lpms::STOP2,
+        #[cfg(stm32c0)]
+            StopMode::Stop => Lpms::STOP,
         }
     }
 }
@@ -174,11 +201,14 @@ impl Executor {
     }
 
     unsafe fn on_wakeup_irq(&mut self) {
+        trace!("low power::on_wakeup_irq");
+        trace!("BEFORE time_driver::resume_time");
         self.time_driver.resume_time();
-        trace!("low power: resume");
+        trace!("AFTER time_driver::resume_time");
     }
 
     pub(self) fn stop_with_rtc(&mut self, rtc: &'static Rtc) {
+        trace!("stop_with_rtc");
         self.time_driver.set_rtc(rtc);
 
         rtc.enable_wakeup_line();
@@ -186,11 +216,24 @@ impl Executor {
         trace!("low power: stop with rtc configured");
     }
 
+    #[cfg(not(stm32c0))]
     fn stop_mode(&self) -> Option<StopMode> {
         if unsafe { crate::rcc::REFCOUNT_STOP2 == 0 } && unsafe { crate::rcc::REFCOUNT_STOP1 == 0 } {
+            trace!("stop_mode Stop2");
             Some(StopMode::Stop2)
         } else if unsafe { crate::rcc::REFCOUNT_STOP1 == 0 } {
+            trace!("stop_mode Stop1");
             Some(StopMode::Stop1)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(stm32c0)]
+    fn stop_mode(&self) -> Option<StopMode> {
+        if unsafe { crate::rcc::REFCOUNT_STOP2 == 0 } && unsafe { crate::rcc::REFCOUNT_STOP1 == 0 } {
+            trace!("stop_mode is StopMode::Stop");
+            Some(StopMode::Stop)
         } else {
             None
         }
@@ -198,7 +241,7 @@ impl Executor {
 
     #[allow(unused_variables)]
     fn configure_stop(&mut self, stop_mode: StopMode) {
-        #[cfg(any(stm32l4, stm32l5, stm32u5, stm32u0))]
+        #[cfg(any(stm32l4, stm32l5, stm32u5, stm32u0, stm32c0))]
         crate::pac::PWR.cr1().modify(|m| m.set_lpms(stop_mode.into()));
         #[cfg(stm32h5)]
         crate::pac::PWR.pmcr().modify(|v| {
@@ -209,6 +252,7 @@ impl Executor {
     }
 
     fn configure_pwr(&mut self) {
+        trace!("low_power::configure_pwr");
         self.scb.clear_sleepdeep();
 
         compiler_fence(Ordering::SeqCst);
@@ -220,20 +264,27 @@ impl Executor {
             return;
         }
 
-        if self.time_driver.pause_time().is_err() {
+        trace!("BEFORE time_driver::pause_time");
+        let x = self.time_driver.pause_time();
+        trace!("AFTER time_driver::pause_time");
+        if x.is_err() {
             trace!("low power: failed to pause time");
             return;
         }
 
         let stop_mode = stop_mode.unwrap();
         match stop_mode {
+            #[cfg(not(stm32c0))]
             StopMode::Stop1 => trace!("low power: stop 1"),
+            #[cfg(not(stm32c0))]
             StopMode::Stop2 => trace!("low power: stop 2"),
+            #[cfg(stm32c0)]
+            StopMode::Stop => trace!("low power: stop"),
         }
         self.configure_stop(stop_mode);
 
-        #[cfg(not(feature = "low-power-debug-with-sleep"))]
-        self.scb.set_sleepdeep();
+        // #[cfg(not(feature = "low-power-debug-with-sleep"))]
+        // self.scb.set_sleepdeep();
     }
 
     /// Run the executor.
@@ -261,7 +312,10 @@ impl Executor {
         loop {
             unsafe {
                 executor.inner.poll();
+                trace!("BEFORE low_power::configure_pwr");
                 self.configure_pwr();
+                trace!("AFTER low_power::configure_pwr");
+
                 asm!("wfe");
             };
         }

@@ -203,7 +203,7 @@ unsafe impl Send for AlarmState {}
 impl AlarmState {
     const fn new() -> Self {
         Self {
-            timestamp: Cell::new(u64::MAX),
+            timestamp: Cell::new(0),
         }
     }
 }
@@ -317,6 +317,7 @@ impl RtcDriver {
     }
 
     fn trigger_alarm(&self, cs: CriticalSection) {
+        trace!("timer_driver::trigger_alarm");
         let mut next = self.queue.borrow(cs).borrow_mut().next_expiration(self.now());
         while !self.set_alarm(cs, next) {
             next = self.queue.borrow(cs).borrow_mut().next_expiration(self.now());
@@ -330,8 +331,7 @@ impl RtcDriver {
     #[cfg(feature = "low-power")]
     /// Compute the approximate amount of time until the next alarm
     fn time_until_next_alarm(&self, cs: CriticalSection) -> embassy_time::Duration {
-        let now = self.now() + 32;
-
+        let now: u64 = self.now() + 32;
         embassy_time::Duration::from_ticks(self.alarm.borrow(cs).timestamp.get().saturating_sub(now))
     }
 
@@ -379,9 +379,12 @@ impl RtcDriver {
     #[cfg(feature = "low-power")]
     /// Stop the wakeup alarm, if enabled, and add the appropriate offset
     fn stop_wakeup_alarm(&self, cs: CriticalSection) {
+        trace!("time_driver::stop_wakeup_alarm");
+        trace!("BEFORE low_power::stop_wakeup_alarm");
         if let Some(offset) = self.rtc.borrow(cs).get().unwrap().stop_wakeup_alarm(cs) {
             self.add_time(offset, cs);
         }
+        trace!("AFTER low_power::stop_wakeup_alarm");
     }
 
     /*
@@ -390,8 +393,12 @@ impl RtcDriver {
     #[cfg(feature = "low-power")]
     /// Set the rtc but panic if it's already been set
     pub(crate) fn set_rtc(&self, rtc: &'static Rtc) {
+        trace!("time_driver::set_rtc");
         critical_section::with(|cs| {
+
+            trace!("BEFORE low_power::stop_wakeup_alarm");
             rtc.stop_wakeup_alarm(cs);
+            trace!("AFTER low_power::stop_wakeup_alarm");
 
             assert!(self.rtc.borrow(cs).replace(Some(rtc)).is_none())
         });
@@ -404,24 +411,30 @@ impl RtcDriver {
     #[cfg(feature = "low-power")]
     /// Pause the timer if ready; return err if not
     pub(crate) fn pause_time(&self) -> Result<(), ()> {
+        trace!("time_driver::pause_time");
         critical_section::with(|cs| {
             /*
                 If the wakeup timer is currently running, then we need to stop it and
                 add the elapsed time to the current time, as this will impact the result
                 of `time_until_next_alarm`.
             */
+            trace!("BEFORE time_driver::stop_wakeup_alarm");
             self.stop_wakeup_alarm(cs);
+            trace!("AFTER time_driver::stop_wakeup_alarm");
 
             let time_until_next_alarm = self.time_until_next_alarm(cs);
+            trace!("time_until_next_alarm {} Self::MIN_STOP_PAUSE {}", time_until_next_alarm.as_millis(), Self::MIN_STOP_PAUSE.as_millis());
             if time_until_next_alarm < Self::MIN_STOP_PAUSE {
                 Err(())
             } else {
+                trace!("starting wakeup alarm");
                 self.rtc
                     .borrow(cs)
                     .get()
                     .unwrap()
                     .start_wakeup_alarm(time_until_next_alarm, cs);
 
+                trace!("Disable Timer16");
                 regs_gp16().cr1().modify(|w| w.set_cen(false));
 
                 Ok(())
@@ -432,6 +445,7 @@ impl RtcDriver {
     #[cfg(feature = "low-power")]
     /// Resume the timer with the given offset
     pub(crate) fn resume_time(&self) {
+        trace!("time_driver::resume_time");
         if regs_gp16().cr1().read().cen() {
             // Time isn't currently stopped
 
@@ -441,11 +455,13 @@ impl RtcDriver {
         critical_section::with(|cs| {
             self.stop_wakeup_alarm(cs);
 
+            trace!("Enable Timer16");
             regs_gp16().cr1().modify(|w| w.set_cen(true));
         })
     }
 
     fn set_alarm(&self, cs: CriticalSection, timestamp: u64) -> bool {
+        trace!("time_driver::set_alarm: {}", timestamp);
         let r = regs_gp16();
 
         let n = 0;
@@ -500,6 +516,7 @@ impl Driver for RtcDriver {
     }
 
     fn schedule_wake(&self, at: u64, waker: &core::task::Waker) {
+        trace!("schedule_wake: at {}", at);
         critical_section::with(|cs| {
             let mut queue = self.queue.borrow(cs).borrow_mut();
 

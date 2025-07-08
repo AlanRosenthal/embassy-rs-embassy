@@ -25,7 +25,7 @@ use crate::time::Hertz;
     ),
     path = "v2.rs"
 )]
-#[cfg_attr(any(rtc_v3, rtc_v3u5, rtc_v3l5, rtc_v3h7rs), path = "v3.rs")]
+#[cfg_attr(any(rtc_v3, rtc_v3u5, rtc_v3l5, rtc_v3h7rs, rtc_v3c0), path = "v3.rs")]
 mod _version;
 #[allow(unused_imports)]
 pub use _version::*;
@@ -65,7 +65,7 @@ impl RtcTimeProvider {
             let minute = bcd2_to_byte((tr.mnt(), tr.mnu()));
             let hour = bcd2_to_byte((tr.ht(), tr.hu()));
 
-            let weekday = day_of_week_from_u8(dr.wdu()).map_err(RtcError::InvalidDateTime)?;
+            let weekday = day_of_week_from_u8(dr.wdu().into()).map_err(RtcError::InvalidDateTime)?;
             let day = bcd2_to_byte((dr.dt(), dr.du()));
             let month = bcd2_to_byte((dr.mt() as u8, dr.mu()));
             let year = bcd2_to_byte((dr.yt(), dr.yu())) as u16 + 2000_u16;
@@ -223,7 +223,7 @@ impl Rtc {
                 w.set_mu(mu);
                 w.set_yt(yt);
                 w.set_yu(yu);
-                w.set_wdu(day_of_week_to_u8(t.day_of_week()));
+                w.set_wdu(t.day_of_week().into());
             });
         });
 
